@@ -10,6 +10,7 @@ from functools import partial
 from multiprocessing import Pool, cpu_count
 
 import pooltool as pt
+from tqdm import tqdm
 from shot_utils import config
 from shot_utils.rendering import encode_video, render_frames
 from shot_utils.simulation import (build_system_one_ball_hit_cushion,
@@ -30,14 +31,14 @@ def run_shot(
     system = build_system_one_ball_hit_cushion(x, y, velocity, phi)
     simulate_shot(system, config.DURATION, config.FPS)
 
-    df = extract_trajectories(system)
-    df = df[df["t"] <= config.DURATION].copy()
-
-    trajectory_path = outdir / f"trajectory_{shot_id}.csv"
-    df.to_csv(trajectory_path, index=False)
-
-    system_path = outdir / f"system_{shot_id}.json"
-    system.save(system_path)
+    # df = extract_trajectories(system)
+    # df = df[df["t"] <= config.DURATION].copy()
+    #
+    # trajectory_path = outdir / f"trajectory_{shot_id}.csv"
+    # df.to_csv(trajectory_path, index=False)
+    #
+    # system_path = outdir / f"system_{shot_id}.json"
+    # system.save(system_path)
 
     metadata = {
         "shot_id": shot_id,
@@ -56,8 +57,12 @@ def run_shot(
     frames_dir = render_frames(system, outdir, config.FPS)
     video_path = outdir / f"video_{shot_id}.mp4"
     encode_video(frames_dir, config.FPS, video_path)
-    if frames_dir.exists():
-        shutil.rmtree(frames_dir)
+    # Always delete frames directory after encoding video
+    try:
+        if frames_dir.exists():
+            shutil.rmtree(frames_dir)
+    except Exception:
+        pass  # Best effort cleanup
 
     return {
         "shot_id": shot_id,
@@ -66,8 +71,8 @@ def run_shot(
         "phi": phi,
         "paths": {
             "directory": str(outdir),
-            "trajectory": str(trajectory_path),
-            "system": str(system_path),
+            # "trajectory": str(trajectory_path),
+            # "system": str(system_path),
             "summary": str(summary_path),
             "video": str(video_path),
         },
@@ -127,7 +132,12 @@ def main(processes: int | None = None) -> None:
     worker = partial(_run_shot_from_tuple)
     proc_count = processes or cpu_count()
     with Pool(processes=proc_count) as pool:
-        results = pool.map(worker, tasks)
+        results = list(tqdm(
+            pool.imap(worker, tasks),
+            total=len(tasks),
+            desc="Generating shots",
+            unit="shot",
+        ))
 
     index_path = config.GLOBAL_INDEX_PATH
     with open(index_path, "w", encoding="utf-8") as fp:
@@ -140,10 +150,6 @@ def main(processes: int | None = None) -> None:
 def _run_shot_from_tuple(args: tuple[str, float, float, float, float]):
     shot_id, x, y, velocity, phi = args
     result = run_shot(shot_id, x, y, velocity, phi)
-    print(
-        f"Generated {shot_id}: position=({x:.2f}, {y:.2f}) velocity={velocity:.2f} phi={phi:.1f}",
-        flush=True,
-    )
     return result
 
 
