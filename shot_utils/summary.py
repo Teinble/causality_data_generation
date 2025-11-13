@@ -48,7 +48,9 @@ def _first_nonzero_velocity(ball: pt.Ball, eps: float = 1e-6) -> tuple[float, fl
     return tuple(float(comp) for comp in first_state.rvw[1])
 
 
-def summarize_system(system: pt.System) -> dict[str, dict[str, object]]:
+def summarize_system(
+    system: pt.System, metadata: dict[str, object] | None = None
+) -> dict[str, dict[str, object]]:
     cushion_index = _build_cushion_index(system.table)
     pocket_index = _build_pocket_index(system.table)
     pocket_color_lookup = {
@@ -56,6 +58,8 @@ def summarize_system(system: pt.System) -> dict[str, dict[str, object]]:
     }
 
     wall_hits: dict[str, list[int]] = {ball_id: [] for ball_id in system.balls}
+    ball_hits: dict[str, list[str]] = {ball_id: [] for ball_id in system.balls}
+    hit_sequence: dict[str, list[dict[str, str]]] = {ball_id: [] for ball_id in system.balls}
     pocket_results: dict[str, int | None] = {ball_id: None for ball_id in system.balls}
 
     for event in system.events:
@@ -83,6 +87,12 @@ def summarize_system(system: pt.System) -> dict[str, dict[str, object]]:
                 continue
             for ball_id in ball_ids:
                 wall_hits[ball_id].append(cushion_id)
+                hit_sequence[ball_id].append(
+                    {
+                        "type": "wall",
+                        "name": config.CUSHION_COLOR_LOOKUP.get(cushion_id, "unknown"),
+                    }
+                )
 
         elif event.event_type == EventType.BALL_POCKET:
             pocket_agent = next(
@@ -96,6 +106,15 @@ def summarize_system(system: pt.System) -> dict[str, dict[str, object]]:
                 if pocket_results[ball_id] is None:
                     pocket_results[ball_id] = pocket_id
 
+        elif event.event_type == EventType.BALL_BALL:
+            other_balls = [agent.id for agent in event.agents if agent.agent_type == AgentType.BALL]
+            for hitter in other_balls:
+                for target in other_balls:
+                    if target == hitter:
+                        continue
+                    ball_hits[hitter].append(target)
+                    hit_sequence[hitter].append({"type": "ball", "name": target})
+
     summary: dict[str, dict[str, object]] = {}
     for ball_id, ball in system.balls.items():
         history = ball.history
@@ -103,16 +122,18 @@ def summarize_system(system: pt.System) -> dict[str, dict[str, object]]:
         pos = tuple(float(coord) for coord in state.rvw[0])
         vel = _first_nonzero_velocity(ball)
         hits = wall_hits[ball_id]
-        first_hit = hits[0] if hits else None
         pocket_idx = pocket_results[ball_id]
         summary[ball_id] = {
             "initial_position": pos,
             "initial_velocity": vel,
             "outcomes": {
-                "num_wall_hits": len(hits),
-                "pocketed": pocket_idx is not None,
-                "pocket_id": pocket_color_lookup.get(pocket_idx) if pocket_idx else None,
-                "first_wall_hit": config.CUSHION_COLOR_LOOKUP.get(first_hit) if first_hit else None,
+                "hits": hit_sequence[ball_id],
+                "pocket": pocket_color_lookup.get(pocket_idx) if pocket_idx else None,
+                "wall_hits": len(hits),
+                "ball_hits": len(ball_hits[ball_id]),
             },
         }
-    return summary
+    return {
+        "metadata": metadata or {},
+        "balls": summary,
+    }

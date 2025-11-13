@@ -1,4 +1,5 @@
 shot_out/
+output/
 __pycache__/
 *.json
 *.txt

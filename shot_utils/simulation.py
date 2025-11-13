@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-import pooltool as pt
 import pandas as pd
 
+import pooltool as pt
 
-def build_system_one_ball_hit_cushion() -> pt.System:
+
+def build_system_one_ball_hit_cushion(x: float, y: float, velocity: float, phi: float) -> pt.System:
     table = pt.Table.default()
     balls = {
-        "cue": pt.Ball.create("cue", xy=(0.6, table.w / 2.0)),
+        "cue": pt.Ball.create("cue", xy=(x, y)),
         "1": pt.Ball.create("1", xy=(5.0, 6.0)),
     }
     cue = pt.Cue.default()
     system = pt.System(table=table, balls=balls, cue=cue)
-    system.cue.set_state(V0=2.0, phi=0.0)
+    system.cue.set_state(V0=velocity, phi=phi)
     return system
 
 
