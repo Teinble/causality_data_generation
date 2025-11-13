@@ -1,6 +1,6 @@
 from pathlib import Path
 
-FPS = 5
+FPS = 30
 DURATION = 5.0
 BASE_OUTPUT = Path("output")
 GLOBAL_INDEX_PATH = BASE_OUTPUT / "global_index.json"

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import argparse
 import itertools
 import json
+import shutil
+from functools import partial
+from multiprocessing import Pool, cpu_count
 
 import pooltool as pt
 from shot_utils import config
@@ -52,6 +56,8 @@ def run_shot(
     frames_dir = render_frames(system, outdir, config.FPS)
     video_path = outdir / f"video_{shot_id}.mp4"
     encode_video(frames_dir, config.FPS, video_path)
+    if frames_dir.exists():
+        shutil.rmtree(frames_dir)
 
     return {
         "shot_id": shot_id,
@@ -104,32 +110,49 @@ def _segment_angles(num: int) -> list[float]:
     return [(i * step) % 360.0 for i in range(num)]
 
 
-def main() -> None:
+def main(processes: int | None = None) -> None:
     config.BASE_OUTPUT.mkdir(parents=True, exist_ok=True)
 
     reference_table = pt.Table.default()
-    positions = _scaled_positions(reference_table, num=4)
-    velocities = _segment_values(1.5, 2.7, num=2)
-    phis = _segment_angles(num=4)
+    positions = _scaled_positions(reference_table, num=10)
+    velocities = _segment_values(1, 6, num=10)
+    phis = _segment_angles(num=10)
 
-    global_index: list[dict[str, object]] = []
-    shot_counter = 1
+    combos = list(itertools.product(positions, velocities, phis))
+    tasks = [
+        (f"shot_{idx:02d}", x, y, velocity, phi)
+        for idx, ((x, y), velocity, phi) in enumerate(combos, start=1)
+    ]
 
-    for (x, y), velocity, phi in itertools.product(positions, velocities, phis):
-        shot_id = f"shot_{shot_counter:02d}"
-        entry = run_shot(shot_id, x, y, velocity, phi)
-        global_index.append(entry)
-        print(
-            f"Generated {shot_id}: position=({x:.2f}, {y:.2f}) velocity={velocity:.2f} phi={phi:.1f}"
-        )
-        shot_counter += 1
+    worker = partial(_run_shot_from_tuple)
+    proc_count = processes or cpu_count()
+    with Pool(processes=proc_count) as pool:
+        results = pool.map(worker, tasks)
 
     index_path = config.GLOBAL_INDEX_PATH
     with open(index_path, "w", encoding="utf-8") as fp:
-        json.dump({"shots": global_index}, fp, indent=2)
+        json.dump({"shots": results}, fp, indent=2)
 
     print(f"Global index written to {index_path}")
+    print(f"Generated {len(results)} shots using {proc_count} processes")
+
+
+def _run_shot_from_tuple(args: tuple[str, float, float, float, float]):
+    shot_id, x, y, velocity, phi = args
+    result = run_shot(shot_id, x, y, velocity, phi)
+    print(
+        f"Generated {shot_id}: position=({x:.2f}, {y:.2f}) velocity={velocity:.2f} phi={phi:.1f}",
+        flush=True,
+    )
+    return result
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Generate poolshot dataset")
+    parser.add_argument(
+        "--processes",
+        type=int,
+        default=None,
+        help="Number of worker processes (defaults to CPU count)",
+    )
+    main(parser.parse_args().processes)
