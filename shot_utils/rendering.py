@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
+from subprocess import DEVNULL
 
 from pooltool.ani.animate import FrameStepper
 from pooltool.ani.camera import CameraState, camera_states
@@ -56,6 +57,7 @@ def encode_video(frames_dir: Path, fps: int, video_path: Path) -> None:
     cmd = [
         "ffmpeg",
         "-y",
+        "-loglevel", "error",              # suppress ffmpeg logs (only show errors)
         "-framerate", str(fps),
         "-i", str(frames_dir / config.FRAME_PATTERN),
         "-pix_fmt", "yuv420p",
@@ -65,4 +67,4 @@ def encode_video(frames_dir: Path, fps: int, video_path: Path) -> None:
         str(video_path),
     ]
 
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, stdout=DEVNULL)
