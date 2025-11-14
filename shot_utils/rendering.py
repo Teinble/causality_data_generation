@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 from pooltool.ani.animate import FrameStepper
-from pooltool.ani.camera import camera_states
+from pooltool.ani.camera import CameraState, camera_states
 from pooltool.ani.image import ImageExt, ImageZip, save_images
 
 from . import config
@@ -21,13 +21,28 @@ def render_frames(system, outdir: Path, fps: int) -> Path:
                         prefix=config.FRAME_PREFIX, compress=False)
 
     try:
+        camera_state = camera_states[config.CAMERA_NAME]
+        offset = getattr(config, "CAMERA_DISTANCE_OFFSET", 0.0)
+        if offset:
+            cam_pos = (
+                camera_state.cam_pos[0] + offset,
+                camera_state.cam_pos[1],
+                camera_state.cam_pos[2],
+            )
+            camera_state = CameraState(
+                cam_hpr=camera_state.cam_hpr,
+                cam_pos=cam_pos,
+                fixation_hpr=camera_state.fixation_hpr,
+                fixation_pos=camera_state.fixation_pos,
+            )
+
         save_images(
             exporter=exporter,
             system=system,
             interface=interface,
             size=config.FRAME_SIZE,
             fps=fps,
-            camera_state=camera_states[config.CAMERA_NAME],
+            camera_state=camera_state,
             gray=False,
             show_hud=False,
         )

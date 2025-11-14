@@ -2,7 +2,7 @@ from pathlib import Path
 
 FPS = 15
 DURATION = 5.0
-BASE_OUTPUT = Path("output")
+BASE_OUTPUT = Path("outputs")
 GLOBAL_INDEX_PATH = BASE_OUTPUT / "global_index.json"
 FRAME_SIZE = (int(1.6 * 720), 720)
 # 7_foot_corner_pocket_zoom
@@ -11,6 +11,9 @@ FRAME_SIZE = (int(1.6 * 720), 720)
 # 7_foot_overhead_zoom
 # 7_foot_side_pocket_zoom
 CAMERA_NAME = "7_foot_offcenter"
+# Move the camera slightly farther from the fixation point so the full table and
+# pocket markers remain in frame even when markers sit outside the rails.
+CAMERA_DISTANCE_OFFSET = 0.35
 FRAME_PREFIX = "frame"
 FRAME_PATTERN = f"{FRAME_PREFIX}_%06d.png"
 POCKET_ORDER = ("lb", "lc", "lt", "rb", "rc", "rt")

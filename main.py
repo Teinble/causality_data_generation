@@ -8,6 +8,7 @@ import json
 import shutil
 from functools import partial
 from multiprocessing import Pool, cpu_count
+from pathlib import Path
 
 import pooltool as pt
 from tqdm import tqdm
@@ -27,6 +28,7 @@ def run_shot(
 ) -> dict[str, object]:
     outdir = config.BASE_OUTPUT / shot_id
     outdir.mkdir(parents=True, exist_ok=True)
+    shot_id = shot_id.split("/")[-1]
 
     system = build_system_one_ball_hit_cushion(x, y, velocity, phi)
     simulate_shot(system, config.DURATION, config.FPS)
@@ -55,7 +57,7 @@ def run_shot(
         json.dump(summary, fp, indent=2)
 
     frames_dir = render_frames(system, outdir, config.FPS)
-    video_path = outdir / f"video_{shot_id}.mp4"
+    video_path = outdir / f"video.mp4"
     encode_video(frames_dir, config.FPS, video_path)
     # Always delete frames directory after encoding video
     try:
@@ -115,12 +117,16 @@ def _segment_angles(num: int) -> list[float]:
     return [(i * step) % 360.0 for i in range(num)]
 
 
-def main(processes: int | None = None) -> None:
+def main(processes: int | None = None, dataset_name: str = "default", num_shots: int | None = None) -> None:
+    # Set up dataset-specific output directory
+    config.BASE_OUTPUT = Path("outputs") / dataset_name
+    config.GLOBAL_INDEX_PATH = config.BASE_OUTPUT / "global_index.json"
+    
     config.BASE_OUTPUT.mkdir(parents=True, exist_ok=True)
 
     reference_table = pt.Table.default()
     positions = _scaled_positions(reference_table, num=10)
-    velocities = _segment_values(1, 6, num=10)
+    velocities = _segment_values(0.3, 1.8, num=10)
     phis = _segment_angles(num=10)
 
     combos = list(itertools.product(positions, velocities, phis))
@@ -128,6 +134,10 @@ def main(processes: int | None = None) -> None:
         (f"shot_{idx:02d}", x, y, velocity, phi)
         for idx, ((x, y), velocity, phi) in enumerate(combos, start=1)
     ]
+    
+    # Limit to num_shots if specified (for test runs)
+    if num_shots is not None:
+        tasks = tasks[:num_shots]
 
     worker = partial(_run_shot_from_tuple)
     proc_count = processes or cpu_count()
@@ -156,9 +166,25 @@ def _run_shot_from_tuple(args: tuple[str, float, float, float, float]):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate poolshot dataset")
     parser.add_argument(
+        "-p",
         "--processes",
         type=int,
-        default=None,
+        default=64,
         help="Number of worker processes (defaults to CPU count)",
     )
-    main(parser.parse_args().processes)
+    parser.add_argument(
+        "-d",
+        "--dataset-name",
+        type=str,
+        default="default",
+        help="Name of the dataset (outputs will be stored under outputs/dataset_name)",
+    )
+    parser.add_argument(
+        "-k",
+        "--test-shots",
+        type=int,
+        default=None,
+        help="Number of shots to generate for test run (defaults to all shots)",
+    )
+    args = parser.parse_args()
+    main(processes=args.processes, dataset_name=args.dataset_name, num_shots=args.test_shots)
