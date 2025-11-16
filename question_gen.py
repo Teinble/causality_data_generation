@@ -2,8 +2,13 @@
 # and produces a dataset of multiple-choice questions (MCQs) suitable for training/evaluating
 #
 # Usage example:
-#   python question_gen.py --num-options 6 --num-correct 2
+#   python question_gen.py --dataset ds1 --num-options 6 --num-correct 2
 # This will generate MCQs with 6 options per question, 2 of which are correct.
+# The output will be written to outputs/ds1/raw_qa.jsonl
+#
+# To override the output path:
+#   python question_gen.py --dataset ds1 --output raw_qa.jsonl
+# This will write to raw_qa.jsonl in the current working directory.
 
 import json
 import random
@@ -57,6 +62,19 @@ OPTION_POOL = [
 ]
 
 NUM_OPTIONS = 6  # total options per question
+
+def convert_to_future_tense(option: str) -> str:
+    """Convert past tense option to future tense for predictive questions."""
+    # Replace common past tense patterns with future tense
+    option = option.replace("The ball was pocketed", "The ball will be pocketed")
+    option = option.replace("The ball hit", "The ball will hit")
+    option = option.replace("The ball bounced", "The ball will bounce")
+    option = option.replace("The ball stayed", "The ball will stay")
+    option = option.replace("The ball was not pocketed", "The ball will not be pocketed")
+    option = option.replace("The first wall hit was", "The first wall hit will be")
+    option = option.replace("The second wall hit was", "The second wall hit will be")
+    option = option.replace("The third wall hit was", "The third wall hit will be")
+    return option
 
 def filter_outcomes_for_predictive(outcomes_raw, total_frames):
     """
@@ -168,8 +186,13 @@ def make_index(sim_data: List[Dict]):
 
     return id_to_entry, index_by_pos_vel, pos_to_ids, vel_to_ids
 
-def outcome_options_from_outcome(outcomes: Dict) -> List[str]:
-    """Return a set of plausible true-option strings given outcomes dict, including wall hit labels and pocket color."""
+def outcome_options_from_outcome(outcomes: Dict, future_tense: bool = False) -> List[str]:
+    """Return a set of plausible true-option strings given outcomes dict, including wall hit labels and pocket color.
+    
+    Args:
+        outcomes: Dictionary containing outcome information
+        future_tense: If True, convert options to future tense (for predictive questions)
+    """
     opts = []
     hits = outcomes.get("num_wall_hits", 0)
     wall_hits = outcomes.get("wall_hits", [])
@@ -201,38 +224,73 @@ def outcome_options_from_outcome(outcomes: Dict) -> List[str]:
             opts.append(f"The second wall hit was {wall_hits[1]}")
         if len(wall_hits) > 2:
             opts.append(f"The third wall hit was {wall_hits[2]}")
-    return list(dict.fromkeys(opts))  # dedupe, preserve order
+    opts = list(dict.fromkeys(opts))  # dedupe, preserve order
+    
+    # Convert to future tense if requested
+    if future_tense:
+        opts = [convert_to_future_tense(opt) for opt in opts]
+    
+    return opts
 
-def sample_multilabel_options(true_opts: List[str], pool: List[str], total=4, num_correct=2):
+def sample_multilabel_options(true_opts: List[str], pool: List[str], total=4, num_correct=2, future_tense: bool = False):
     """
     Pick num_correct correct options randomly from true_opts,
     then fill to `total` with distractors from pool not overlapping chosen corrects.
     Only sample distractors that are not logically inconsistent with the true options.
+    
+    Args:
+        true_opts: List of correct option strings
+        pool: Pool of all possible options to sample distractors from
+        total: Total number of options to return
+        num_correct: Number of correct options to include
+        future_tense: If True, convert distractors to future tense
     """
     if not true_opts:
-        true_opts = ["The ball stayed on the table"]
+        true_opts = ["The ball stayed on the table"] if not future_tense else ["The ball will stay on the table"]
 
     num_correct = min(num_correct, len(true_opts), total)
     chosen_correct = random.sample(true_opts, num_correct)
 
     # Filter distractors to avoid logical inconsistency
     def is_consistent(opt, correct_opts):
+        # Normalize option for comparison (remove tense differences)
+        def normalize_tense(s):
+            # Convert future tense to past tense for comparison
+            s = s.replace("will be pocketed", "was pocketed")
+            s = s.replace("will hit", "hit")
+            s = s.replace("will bounce", "bounced")
+            s = s.replace("will stay", "stayed")
+            s = s.replace("will not be pocketed", "was not pocketed")
+            s = s.replace("The first wall hit will be", "The first wall hit was")
+            s = s.replace("The second wall hit will be", "The second wall hit was")
+            s = s.replace("The third wall hit will be", "The third wall hit was")
+            s = s.replace("will be", "was")
+            return s
+        
+        opt_norm = normalize_tense(opt)
+        correct_opts_norm = [normalize_tense(o) for o in correct_opts]
+        
         # Don't allow "The ball was not pocketed" if a correct option says it was pocketed, and vice versa
-        if ("The ball was pocketed" in correct_opts and opt == "The ball was not pocketed") or \
-           ("The ball was not pocketed" in correct_opts and opt == "The ball was pocketed"):
+        if ("The ball was pocketed" in correct_opts_norm and opt_norm == "The ball was not pocketed") or \
+           ("The ball was not pocketed" in correct_opts_norm and opt_norm == "The ball was pocketed"):
             return False
         # Don't allow "The ball hit 0 walls" if a correct option says it hit walls, and vice versa
-        if any(o.startswith("The ball hit 0 wall") for o in correct_opts) and "wall hit" in opt and not opt.startswith("The ball hit 0 wall"):
+        if any(o.startswith("The ball hit 0 wall") for o in correct_opts_norm) and "wall hit" in opt_norm and not opt_norm.startswith("The ball hit 0 wall"):
             return False
-        if any(o.startswith("The ball hit") and "0 wall" not in o for o in correct_opts) and opt.startswith("The ball hit 0 wall"):
+        if any(o.startswith("The ball hit") and "0 wall" not in o for o in correct_opts_norm) and opt_norm.startswith("The ball hit 0 wall"):
             return False
         # Don't allow "The ball stayed on the table" if a correct option says it was pocketed
-        if ("The ball was pocketed" in correct_opts and opt == "The ball stayed on the table"):
+        if ("The ball was pocketed" in correct_opts_norm and opt_norm == "The ball stayed on the table"):
             return False
         return True
 
     distractor_candidates = [o for o in pool if o not in chosen_correct and is_consistent(o, chosen_correct)]
     distractors = random.sample(distractor_candidates, k=max(0, total - num_correct))
+    
+    # Convert distractors to future tense if needed
+    if future_tense:
+        distractors = [convert_to_future_tense(d) for d in distractors]
+    
     all_opts = chosen_correct + distractors
     random.shuffle(all_opts)
     ground_indices = [i for i, opt in enumerate(all_opts) if opt in chosen_correct]
@@ -341,9 +399,9 @@ def generate_sft_mcq_multilabel(sim_data: List[Dict], num_options: int, num_corr
             'which_pocket': which_pocket,
             'pocket_color': pocket_color
         }
-        true_opts_predictive = outcome_options_from_outcome(filtered_outcomes)
-        options_list, ground_indices = sample_multilabel_options(true_opts_predictive, OPTION_POOL, total=num_options, num_correct=num_correct)
-        question_text = "Based on the first half of the video, what will happened in STRICTLY the second half of the video?"
+        true_opts_predictive = outcome_options_from_outcome(filtered_outcomes, future_tense=True)
+        options_list, ground_indices = sample_multilabel_options(true_opts_predictive, OPTION_POOL, total=num_options, num_correct=num_correct, future_tense=True)
+        question_text = "Based on the first half of the video, what will happen in STRICTLY the second half of the video?"
         out_dataset.append({
             "video": video.replace(".mp4","_firsthalf.mp4"),
             "question": question_text,
@@ -402,14 +460,19 @@ def generate_sft_mcq_multilabel(sim_data: List[Dict], num_options: int, num_corr
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate MCQ dataset from simulation metadata.")
+    parser.add_argument("--dataset", type=str, required=True, help="Dataset name (directory under outputs/).")
     parser.add_argument("--num-options", type=int, default=4, help="Total number of options per question.")
     parser.add_argument("--num-correct", type=int, default=2, help="Number of correct options per question.")
+    parser.add_argument("--output", "-o", type=str, default=None, help="Output file path (default: outputs/{dataset}/raw_qa.jsonl). Can be relative or absolute.")
     args = parser.parse_args()
 
+    dataset_dir = os.path.join("outputs", args.dataset)
+    shots_pattern = os.path.join(dataset_dir, "shots", "shot_*", "*.json")
+    
     sim_data = []
     # i= 0
     # limit=100
-    for fname in glob.glob(os.path.join("output", "shot_*", "*.json")):
+    for fname in glob.glob(shots_pattern):
         # if i >= limit:
         #     break
         with open(fname, "r") as f:
@@ -418,8 +481,12 @@ if __name__ == "__main__":
 
     dataset = generate_sft_mcq_multilabel(sim_data, num_options=args.num_options, num_correct=args.num_correct)
     # Write to jsonl
-    with open("mcq_multilabel.jsonl", "w") as f:
+    if args.output:
+        output_path = args.output
+    else:
+        output_path = os.path.join(dataset_dir, "raw_qa.jsonl")
+    with open(output_path, "w") as f:
         for ex in dataset:
             f.write(json.dumps(ex) + "\n")
-    print("Wrote", len(dataset), "examples")
+    print("Wrote", len(dataset), "examples to", output_path)
 
