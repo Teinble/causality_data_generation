@@ -35,9 +35,9 @@ def run_shot(
     phi: float,
     camera_name: str,
 ) -> dict[str, object]:
-    outdir = config.BASE_OUTPUT / camera_name / shot_id
     outdir.mkdir(parents=True, exist_ok=True)
     shot_id = shot_id.split("/")[-1]
+    outdir = config.BASE_OUTPUT / "shots" / shot_id
 
     system = build_system_one_ball_hit_cushion(x, y, velocity, phi)
     simulate_shot(system, config.FPS)

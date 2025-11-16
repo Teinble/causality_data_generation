@@ -335,11 +335,13 @@ def generate_sft_mcq_multilabel(sim_data: List[Dict]):
 
     return out_dataset
 
+DATASET_NAME = "1k_simple"
+
 # Read all JSON files from ./data/output/
 sim_data = []
 # i= 0
 # limit=100
-for fname in glob.glob(os.path.join("output", "shot_*", "*.json")):
+for fname in glob.glob(os.path.join("outputs", DATASET_NAME, "shot_*", "*.json")):
     # if i >= limit:
     #     break
     with open(fname, "r") as f:
@@ -348,7 +350,7 @@ for fname in glob.glob(os.path.join("output", "shot_*", "*.json")):
 
 dataset = generate_sft_mcq_multilabel(sim_data)
 # Write to jsonl
-with open("mcq_multilabel.jsonl", "w") as f:
+with open(os.path.join("outputs", DATASET_NAME, "raw_qa.jsonl"), "w") as f:
     for ex in dataset:
         f.write(json.dumps(ex) + "\n")
 print("Wrote", len(dataset), "examples")
