@@ -177,14 +177,19 @@ def has_hit_index_exceeding_threshold(sim_entry: Dict, max_hit_index: int) -> bo
     return False
 
 
-def filter_outcomes_for_predictive(outcomes_raw, total_frames):
+def filter_outcomes_for_predictive(outcomes_raw, total_frames, fraction=0.5):
     """
-    Return a filtered version of outcomes_raw where wall hits with frame < 0.5*total_frames are removed,
+    Return a filtered version of outcomes_raw where wall hits with frame < fraction*total_frames are removed,
     and wall_hits count is adjusted accordingly.
+    
+    Args:
+        outcomes_raw: Raw outcomes dictionary
+        total_frames: Total number of frames in the video
+        fraction: Fraction of video to filter out (default 0.5, meaning first half)
     """
     if not isinstance(outcomes_raw, dict):
         return outcomes_raw
-    half_frames = 0.5 * total_frames if total_frames else 0
+    threshold_frames = fraction * total_frames if total_frames else 0
     hits_list = outcomes_raw.get("hits", [])
     filtered_hits = [
         h
@@ -192,7 +197,7 @@ def filter_outcomes_for_predictive(outcomes_raw, total_frames):
         if not (
             isinstance(h, dict)
             and h.get("type") == "wall"
-            and h.get("frame", 0) < half_frames
+            and h.get("frame", 0) < threshold_frames
         )
     ]
     wall_hits = [
@@ -541,6 +546,7 @@ def generate_sft_mcq_multilabel(
     num_predictive_per_shot: int = 1,
     max_velocity_cfs_per_shot: int = 3,
     max_position_cfs_per_shot: int = 3,
+    predictive_filter_fraction: float = 0.5,
 ):
     """
     Generate dataset with the following schema for each example:
@@ -617,7 +623,7 @@ def generate_sft_mcq_multilabel(
         else:
             outcomes_raw = raw.get("outcomes", {})
         filtered_outcomes_raw = filter_outcomes_for_predictive(
-            outcomes_raw, total_frames
+            outcomes_raw, total_frames, fraction=predictive_filter_fraction
         )
         # Build filtered outcomes dict for options
         hits_list = filtered_outcomes_raw.get("hits", [])
@@ -672,12 +678,12 @@ def generate_sft_mcq_multilabel(
                 question_text = (
                     "Context: "
                     + context_text
-                    + "\nQuestion: Based on the first half of the video, what will happen in "
-                    "STRICTLY the second half of the video?"
+                    + "\nQuestion: Based on the first part of the video, what will happen in "
+                    "STRICTLY the second part of the video?"
                 )
                 out_dataset.append(
                     {
-                        "video": video.replace(".mp4", "_firsthalf.mp4"),
+                        "video": video.replace(".mp4", "_partial.mp4"),
                         "question": question_text,
                         "options": options_list,
                         "ground_truth": ground_indices,
@@ -690,78 +696,80 @@ def generate_sft_mcq_multilabel(
                 )
 
         # --- COUNTERFACTUALS: up to N velocity and M position neighbors ---
-        vel_cf_ids = find_velocity_cfs(
-            pos, vel, pos_to_ids, id2entry, n=max_velocity_cfs_per_shot
-        )
-        for vel_cf_id in vel_cf_ids:
-            cf_entry = id2entry[vel_cf_id]
-            cf_out = cf_entry["outcomes"]
-            # Counterfactuals: phrase options in conditional tense ("would ...").
-            true_opts_cf = outcome_options_from_outcome(cf_out, tense="conditional")
-            options_list, ground_indices = sample_multilabel_options(
-                true_opts_cf,
-                OPTION_POOL,
-                total=num_options,
-                num_correct=num_correct,
-                tense="conditional",
+        if max_velocity_cfs_per_shot > 0:
+            vel_cf_ids = find_velocity_cfs(
+                pos, vel, pos_to_ids, id2entry, n=max_velocity_cfs_per_shot
             )
-            question_text = (
-                f"Context: {context_text}\n"
-                f"Question: If the initial velocity were changed from {coord_to_str(vel, prefix='d')} "
-                f"to {coord_to_str(cf_entry['initial_state']['velocity'], prefix='d')} "
-                f"(assume all other variables are unchanged), what would happen?"
-            )
-            out_dataset.append(
-                {
-                    "video": video,
-                    "question": question_text,
-                    "options": options_list,
-                    "ground_truth": ground_indices,
-                    "metadata": {
-                        "question_type": "counterfactual_velocity",
-                        "sim_id": sim_id,
-                        "counterfactual_sim_id": vel_cf_id,
-                        "counterfactual_video": cf_entry["video"],
-                        "counterfactual_initial_state": cf_entry["initial_state"],
-                    },
-                }
-            )
+            for vel_cf_id in vel_cf_ids:
+                cf_entry = id2entry[vel_cf_id]
+                cf_out = cf_entry["outcomes"]
+                # Counterfactuals: phrase options in conditional tense ("would ...").
+                true_opts_cf = outcome_options_from_outcome(cf_out, tense="conditional")
+                options_list, ground_indices = sample_multilabel_options(
+                    true_opts_cf,
+                    OPTION_POOL,
+                    total=num_options,
+                    num_correct=num_correct,
+                    tense="conditional",
+                )
+                question_text = (
+                    f"Context: {context_text}\n"
+                    f"Question: If the initial velocity were changed from {coord_to_str(vel, prefix='d')} "
+                    f"to {coord_to_str(cf_entry['initial_state']['velocity'], prefix='d')} "
+                    f"(assume all other variables are unchanged), what would happen?"
+                )
+                out_dataset.append(
+                    {
+                        "video": video,
+                        "question": question_text,
+                        "options": options_list,
+                        "ground_truth": ground_indices,
+                        "metadata": {
+                            "question_type": "counterfactual_velocity",
+                            "sim_id": sim_id,
+                            "counterfactual_sim_id": vel_cf_id,
+                            "counterfactual_video": cf_entry["video"],
+                            "counterfactual_initial_state": cf_entry["initial_state"],
+                        },
+                    }
+                )
 
-        pos_cf_ids = find_position_cfs(
-            pos, vel, vel_to_ids, id2entry, n=max_position_cfs_per_shot
-        )
-        for pos_cf_id in pos_cf_ids:
-            cf_entry = id2entry[pos_cf_id]
-            cf_out = cf_entry["outcomes"]
-            true_opts_cf = outcome_options_from_outcome(cf_out, tense="conditional")
-            options_list, ground_indices = sample_multilabel_options(
-                true_opts_cf,
-                OPTION_POOL,
-                total=num_options,
-                num_correct=num_correct,
-                tense="conditional",
+        if max_position_cfs_per_shot > 0:
+            pos_cf_ids = find_position_cfs(
+                pos, vel, vel_to_ids, id2entry, n=max_position_cfs_per_shot
             )
-            question_text = (
-                f"Context: {context_text}\n"
-                f"Question: If the initial ball position were changed from {coord_to_str(pos)} "
-                f"to {coord_to_str(cf_entry['initial_state']['position'])} "
-                f"(assume all other variables are unchanged), what would happen?"
-            )
-            out_dataset.append(
-                {
-                    "video": video,
-                    "question": question_text,
-                    "options": options_list,
-                    "ground_truth": ground_indices,
-                    "metadata": {
-                        "question_type": "counterfactual_position",
-                        "sim_id": sim_id,
-                        "counterfactual_sim_id": pos_cf_id,
-                        "counterfactual_video": cf_entry["video"],
-                        "counterfactual_initial_state": cf_entry["initial_state"],
-                    },
-                }
-            )
+            for pos_cf_id in pos_cf_ids:
+                cf_entry = id2entry[pos_cf_id]
+                cf_out = cf_entry["outcomes"]
+                true_opts_cf = outcome_options_from_outcome(cf_out, tense="conditional")
+                options_list, ground_indices = sample_multilabel_options(
+                    true_opts_cf,
+                    OPTION_POOL,
+                    total=num_options,
+                    num_correct=num_correct,
+                    tense="conditional",
+                )
+                question_text = (
+                    f"Context: {context_text}\n"
+                    f"Question: If the initial ball position were changed from {coord_to_str(pos)} "
+                    f"to {coord_to_str(cf_entry['initial_state']['position'])} "
+                    f"(assume all other variables are unchanged), what would happen?"
+                )
+                out_dataset.append(
+                    {
+                        "video": video,
+                        "question": question_text,
+                        "options": options_list,
+                        "ground_truth": ground_indices,
+                        "metadata": {
+                            "question_type": "counterfactual_position",
+                            "sim_id": sim_id,
+                            "counterfactual_sim_id": pos_cf_id,
+                            "counterfactual_video": cf_entry["video"],
+                            "counterfactual_initial_state": cf_entry["initial_state"],
+                        },
+                    }
+                )
 
     return out_dataset
 
@@ -832,6 +840,14 @@ if __name__ == "__main__":
         action="store_true",
         help="Exclude videos with any hit index > 18.",
     )
+    parser.add_argument(
+        "--predictive-filter-fraction",
+        "-f",
+        type=float,
+        default=0.5,
+        help="Fraction of video to filter out for predictive questions (default: 0.5, meaning first half). "
+        "E.g., 0.3 means filter out wall hits from first 30%% of video.",
+    )
     args = parser.parse_args()
 
     dataset_dir = os.path.join("outputs", args.dataset)
@@ -868,6 +884,7 @@ if __name__ == "__main__":
         num_predictive_per_shot=args.num_predictive_per_shot,
         max_velocity_cfs_per_shot=args.max_velocity_cfs_per_shot,
         max_position_cfs_per_shot=args.max_position_cfs_per_shot,
+        predictive_filter_fraction=args.predictive_filter_fraction,
     )
     # Write to jsonl
     if args.output:
