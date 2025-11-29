@@ -848,7 +848,17 @@ if __name__ == "__main__":
         help="Fraction of video to filter out for predictive questions (default: 0.5, meaning first half). "
         "E.g., 0.3 means filter out wall hits from first 30%% of video.",
     )
+    parser.add_argument(
+        "--seed",
+        "-s",
+        type=int,
+        default=42,
+        help="Random seed for reproducibility (default: 42).",
+    )
     args = parser.parse_args()
+
+    # Set random seed for reproducibility
+    random.seed(args.seed)
 
     dataset_dir = os.path.join("outputs", args.dataset)
     shots_pattern = os.path.join(dataset_dir, "shots", "shot_*", "*.json")

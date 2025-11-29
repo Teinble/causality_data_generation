@@ -26,7 +26,18 @@ uv pip install pandas tqdm
 
 
 ```sh
-python question_gen.py -d ds1 -o outputs/ds1/raw_qa.jsonl -D 3 -p 3 -v 5 -P 5 -e -f 0.2
+python question_gen.py \
+  --seed 42 \
+  --dataset 1k_simple \
+  --output outputs/ds1/raw_qa.jsonl \
+  --num-options 4 \
+  --num-correct 2 \
+  --num-descriptive-per-shot 1 \
+  --num-predictive-per-shot 1 \
+  --max-velocity-cfs-per-shot 1 \
+  --max-position-cfs-per-shot 1 \
+  --exclude-invalid-hits \
+  --predictive-filter-fraction 0.2
 
 
 # only predictive
