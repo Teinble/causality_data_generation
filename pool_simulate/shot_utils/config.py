@@ -4,6 +4,8 @@ FPS = 15
 BASE_OUTPUT = Path("outputs")
 GLOBAL_INDEX_PATH = BASE_OUTPUT / "global_index.json"
 FRAME_SIZE = (int(1.6 * 720), 720)
+# Video output resolution (height in pixels). Width is auto-calculated to maintain aspect ratio.
+VIDEO_HEIGHT = 240
 # 7_foot_corner_pocket_zoom
 # 7_foot_offcenter (default)
 # 7_foot_overhead

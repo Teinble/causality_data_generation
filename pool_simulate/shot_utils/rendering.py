@@ -172,9 +172,9 @@ def encode_video_stream(frames: NDArray[np.uint8], fps: int, video_path: Path) -
         "-pix_fmt",
         "yuv420p",
         "-crf",
-        "20",  # optional: slightly higher CRF for smaller 240p files
+        "20",  # optional: slightly higher CRF for smaller files
         "-vf",
-        "scale=-2:240:flags=lanczos,pad=ceil(iw/2)*2:ceil(ih/2)*2",
+        f"scale=-2:{config.VIDEO_HEIGHT}:flags=lanczos,pad=ceil(iw/2)*2:ceil(ih/2)*2",
         "-movflags",
         "+faststart",  # optional: better web playback
         str(video_path),
@@ -236,9 +236,9 @@ def encode_video(frames_dir: Path, fps: int, video_path: Path) -> None:
         "-pix_fmt",
         "yuv420p",
         "-crf",
-        "20",  # optional: slightly higher CRF for smaller 240p files
+        "20",  # optional: slightly higher CRF for smaller files
         "-vf",
-        "scale=-2:240:flags=lanczos,pad=ceil(iw/2)*2:ceil(ih/2)*2",
+        f"scale=-2:{config.VIDEO_HEIGHT}:flags=lanczos,pad=ceil(iw/2)*2:ceil(ih/2)*2",
         "-movflags",
         "+faststart",  # optional: better web playback
         str(video_path),
