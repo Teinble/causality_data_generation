@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
-import shutil
 import sys
 from functools import partial
 from multiprocessing import Pool, cpu_count
@@ -30,7 +29,6 @@ from shot_utils.rendering import render_and_encode_video
 from shot_utils.simulation import (
     BallState,
     build_system,
-    extract_trajectories,
     simulate_shot,
 )
 from shot_utils.summary import summarize_system
@@ -43,7 +41,7 @@ CAMERA_STATES = [
 ]
 
 # Map camera names to IDs
-CAMERA_ID_MAP = {name: f"cam{i:02d}" for i, name in enumerate(CAMERA_STATES)}
+CAMERA_ID_MAP = {name: f"cam{i}" for i, name in enumerate(CAMERA_STATES)}
 CAMERA_NAME_MAP = {cam_id: name for name, cam_id in CAMERA_ID_MAP.items()}
 
 
@@ -51,33 +49,44 @@ def run_shot(
     base_output: Path,
     shot_id: str,
     ball_states: dict[str, BallState],
-    camera_name: str,
+    camera_names: tuple[str, ...] = tuple(CAMERA_STATES),
 ) -> None:
     # shot_id is per unique shot (ball_states configuration)
     # Each shot directory contains multiple video files, one per camera
     outdir = base_output / "shots" / shot_id
     outdir.mkdir(parents=True, exist_ok=True)
 
-    camera_id = CAMERA_ID_MAP[camera_name]
-    video_path = outdir / f"video_{camera_id}.mp4"
     summary_path = outdir / f"summary.json"
+    video_paths = {
+        camera_name: outdir / f"video_{CAMERA_ID_MAP[camera_name]}.mp4" for camera_name in camera_names
+    }
 
-    # Skip if already exists
-    if video_path.exists() and summary_path.exists():
+    # Skip if everything for this shot already exists
+    if summary_path.exists() and all(video_path.exists() for video_path in video_paths.values()):
         return
 
-    # Build and simulate system (needed for rendering)
+    # Build and simulate system once per shot (reuse for all cameras)
     system = build_system(ball_states)
     simulate_shot(system, config.FPS)
 
-    # Render video for this camera
-    frame_count = render_and_encode_video(
-        system=system,
-        outdir=outdir,
-        fps=config.FPS,
-        video_path=video_path,
-        camera_name=camera_name,
-    )
+    # Render videos only for missing cameras
+    frame_count: int | None = None
+    for camera_name, video_path in video_paths.items():
+        if video_path.exists():
+            continue
+        rendered_frames = render_and_encode_video(
+            system=system,
+            outdir=outdir,
+            fps=config.FPS,
+            video_path=video_path,
+            camera_name=camera_name,
+        )
+        if frame_count is None:
+            frame_count = rendered_frames
+
+    # Fallback frame count (in case only summary is missing)
+    if frame_count is None:
+        frame_count = _frame_count_from_system(system)
 
     # Create summary if it doesn't exist (first camera for this shot)
     if not summary_path.exists():
@@ -100,6 +109,19 @@ def run_shot(
         summary = summarize_system(system, metadata=metadata)
         with open(summary_path, "w", encoding="utf-8") as fp:
             json.dump(summary, fp, indent=2)
+
+
+def _frame_count_from_system(system) -> int:
+    """Estimate number of frames from simulated ball histories."""
+    for ball in system.balls.values():
+        history = getattr(ball, "history_cts", None) or getattr(ball, "history", None)
+        if history is None:
+            continue
+        try:
+            return len(history)
+        except Exception:
+            continue
+    return 0
 
 
 def _scaled_positions(table: pt.Table, num: int) -> list[tuple[float, float]]:
@@ -158,13 +180,12 @@ def main(
     # Each unique shot (ball_states configuration) gets one shot_id
     # Each shot will have multiple videos (one per camera) in the same directory
     for (x, y), speed, phi in combos:
-        shot_label = f"shot_{shot_counter:02d}"
+        shot_label = f"shot_{shot_counter}"
         # Create ball_states dict with cue ball
         ball_states = {
             "cue": BallState(x=x, y=y, speed=speed, phi=phi),
         }
-        for camera_name in CAMERA_STATES:
-            tasks.append((base_output, shot_label, ball_states, camera_name))
+        tasks.append((base_output, shot_label, ball_states, tuple(CAMERA_STATES)))
         shot_counter += 1
 
     # Limit to num_shots if specified (for test runs)
@@ -173,23 +194,24 @@ def main(
 
     worker = partial(_run_shot_from_tuple)
     proc_count = processes or cpu_count()
+    chunksize = max(1, len(tasks) // (proc_count * 4)) if tasks else 1
+
     with Pool(processes=proc_count) as pool:
-        list(
-            tqdm(
-                pool.imap(worker, tasks),
-                total=len(tasks),
-                desc="Generating shots",
-                unit="shot",
-                file=sys.stdout,
-            )
-        )
+        for _ in tqdm(
+            pool.imap(worker, tasks, chunksize=chunksize),
+            total=len(tasks),
+            desc="Generating shots",
+            unit="shot",
+            file=sys.stdout,
+        ):
+            pass
 
     print(f"Generated {len(tasks)} shots using {proc_count} processes")
 
 
-def _run_shot_from_tuple(args: tuple[Path, str, dict[str, BallState], str]) -> None:
-    base_output, shot_id, ball_states, camera_name = args
-    run_shot(base_output, shot_id, ball_states, camera_name)
+def _run_shot_from_tuple(args: tuple[Path, str, dict[str, BallState], tuple[str, ...]]) -> None:
+    base_output, shot_id, ball_states, camera_names = args
+    run_shot(base_output, shot_id, ball_states, camera_names)
 
 
 if __name__ == "__main__":
@@ -198,7 +220,7 @@ if __name__ == "__main__":
         "-p",
         "--processes",
         type=int,
-        default=64,
+        default=None,
         help="Number of worker processes (defaults to CPU count)",
     )
     parser.add_argument(
